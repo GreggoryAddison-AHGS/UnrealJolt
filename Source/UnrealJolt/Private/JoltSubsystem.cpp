@@ -37,6 +37,10 @@
 
 DEFINE_LOG_CATEGORY(JoltSubSystemLogs);
 
+// Power-of-two mask for a 128-element buffer
+static constexpr int32 BUFFER_SIZE = 128;
+static constexpr int32 BUFFER_MASK = BUFFER_SIZE - 1;
+
 void UJoltSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 
@@ -45,6 +49,7 @@ void UJoltSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 #ifdef JPH_ENABLE_ASSERTS
 	JPH::AssertFailed = JoltHelpers::UEAssertFailed;
 #endif
+	StateFilter = new SaveStateFilter();
 	JPH::RegisterDefaultAllocator();
 	JPH::Factory::sInstance = new JPH::Factory();
 	JPH::RegisterTypes();
@@ -74,6 +79,7 @@ void UJoltSubsystem::Deinitialize()
 	delete JoltDebugRendererImpl;
 	delete DrawSettings;
 #endif
+	delete StateFilter;
 	delete BroadPhaseLayerInterface;
 	delete ObjectVsBroadphaseLayerFilter;
 	delete ObjectVsObjectLayerFilter;
@@ -343,27 +349,26 @@ void UJoltSubsystem::Tick(float deltaSeconds)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(UJoltSubsystem::Tick);
 	Super::Tick(deltaSeconds);
-
-	if (JoltSettings)
-	{
-		if (!JoltSettings->bAutoStepPhysics)
-		{
-			return;
-		}
-	}
-
+	
 	if (JoltWorker == nullptr)
 	{
 		return;
 	}
-
+	
 	if (!bStepPaused)
 	{
 		Accumulator += deltaSeconds;
 
 		while (Accumulator >= ConfiguredDeltaSeconds)
 		{
-			StepPhysics();
+			/*if (JoltSettings)
+			{
+				if (JoltSettings->bAutoStepPhysics)
+				{
+					StepPhysics();
+				}
+			}*/
+			
 			Accumulator -= ConfiguredDeltaSeconds;
 		}
 	}
@@ -504,6 +509,11 @@ void UJoltSubsystem::InitPhysicsSystem(
 	UE_LOG(JoltSubSystemLogs, Log, TEXT("Jolt subsystem init complete"));
 }
 
+void UJoltSubsystem::ResetPhysicsState(const int32 Frame)
+{
+	RestoreState(Frame);
+}
+
 int64 UJoltSubsystem::AddDynamicBody(AActor* body, const float& friction, const float& restitution, const float& mass, FName Layer)
 {
 
@@ -517,6 +527,7 @@ int64 UJoltSubsystem::AddDynamicBody(AActor* body, const float& friction, const 
 		{
 			JoltBodyActors.Emplace(joltBodyID, body);
 			ID = joltBodyID->GetIndexAndSequenceNumber();
+			StateFilter->AddToBodyIDAllowList(*joltBodyID);
 		}
 	});
 	return ID;
@@ -1314,11 +1325,64 @@ void UJoltSubsystem::SaveState(TArray<uint8>& serverPhysicsState, JPH::StateReco
 	serverPhysicsState.Append(reinterpret_cast<const uint8*>(physicsState.data()), physicsState.size());
 }
 
+void UJoltSubsystem::SaveState(TArray<uint8>& serverPhysicsState) const
+{
+	JPH::StateRecorderImpl* stateRecorder = new JPH::StateRecorderImpl;
+	MainPhysicsSystem->SaveState(*stateRecorder, JPH::EStateRecorderState::All, StateFilter);
+	std::string physicsState = stateRecorder->GetData();
+	delete stateRecorder;
+	serverPhysicsState.Append(reinterpret_cast<const uint8*>(physicsState.data()), physicsState.size());
+}
+
+void UJoltSubsystem::SaveState(const int32& Frame)
+{
+	CurrentPhysicsFrame = Frame;
+	// 1. Calculate the exact slot index (CurrentTick & 127)
+	const int32 SlotIndex = Frame & BUFFER_MASK;
+
+	// 2. Get a reference to the existing struct in your array
+	FJoltWorldSnapshot& Snapshot = HistoryRingBuffer[SlotIndex];
+
+	// 3. Set the metadata
+	Snapshot.Frame = Frame;
+
+	// 4. Capture Jolt's binary world state
+	JPH::StateRecorderImpl Recorder;
+	MainPhysicsSystem->SaveState(Recorder);
+
+	// 5. Copy Jolt's byte stream into your snapshot's TArray<uint8>
+	// Reset() reuses existing allocated capacity to avoid heap fragmentation
+	Snapshot.StateDataStream.Reset(); 
+    
+	// Copy the raw bytes from Jolt's recorder into Unreal's byte array
+	const auto& JoltData = Recorder.GetData(); // Internal Jolt byte vector
+	Snapshot.StateDataStream.Append(reinterpret_cast<const uint8*>(JoltData.data()), JoltData.size());
+}
+
+FJoltWorldSnapshot& UJoltSubsystem::GetSnapshotForFrame(const int32& Frame)
+{
+	// Fast bitwise indexing instead of Tick % 128
+	int32 Index = Frame & BUFFER_MASK; 
+	return HistoryRingBuffer[Index];
+}
+
+const FJoltWorldSnapshot& UJoltSubsystem::GetSnapshotForFrame(const int32& Frame) const
+{
+	// Fast bitwise indexing instead of Tick % 128
+	int32 Index = Frame & BUFFER_MASK; 
+	return HistoryRingBuffer[Index];
+}
+
 void UJoltSubsystem::RestoreState(const TArray<uint8>& serverPhysicsState) const
 {
 	JPH::StateRecorderImpl state;
 	state.WriteBytes(serverPhysicsState.GetData(), serverPhysicsState.Num());
 	MainPhysicsSystem->RestoreState(state);
+}
+
+void UJoltSubsystem::RestoreState(const int32& Frame) const
+{
+	RestoreState(GetSnapshotForFrame(Frame).StateDataStream);
 }
 
 void UJoltSubsystem::LoadLandscapeFromDataAsset()
@@ -1633,11 +1697,6 @@ void UJoltSubsystem::HandleLandscapeMeshes(const ALandscape* LandscapeActor)
 
 bool UJoltSubsystem::IsTickable() const
 {
-	if (const UJoltSettings* Settings = GetDefault<UJoltSettings>())
-	{
-		return Settings->bAutoStepPhysics;
-	}
-	
 	return Super::IsTickable();
 }
 

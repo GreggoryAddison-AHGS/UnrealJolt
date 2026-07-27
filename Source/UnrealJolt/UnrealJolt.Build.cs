@@ -8,6 +8,7 @@ public class UnrealJolt : ModuleRules
 	{
 		PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
 		FPSemantics = FPSemanticsMode.Precise;
+		OptimizeCode = CodeOptimization.InShippingBuildsOnly;
 
 		PublicDependencyModuleNames.AddRange(
 				new string[]

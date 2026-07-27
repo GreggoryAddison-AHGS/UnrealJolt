@@ -21,6 +21,18 @@
 
 #include "JoltSubsystem.generated.h"
 
+USTRUCT()
+struct FJoltWorldSnapshot
+{
+	GENERATED_BODY()
+	
+	UPROPERTY(VisibleAnywhere)
+	int32 Frame = INDEX_NONE;
+	
+	UPROPERTY(VisibleAnywhere)
+	TArray<uint8> StateDataStream;
+};
+
 /* Just used to make them friend classess of UJoltSubSystem class because it needs some private methods
  * that should not be exposed to avoid accidental usage in project code  */
 class UJoltSkeletalMeshComponent;
@@ -79,6 +91,12 @@ class UNREALJOLT_API UJoltSubsystem : public UTickableWorldSubsystem
 	GENERATED_BODY()
 
 public:
+	UFUNCTION(BlueprintCallable, Category = "Jolt Physics", meta = (DevelopmentOnly))
+	void ResetPhysicsState(const int32 Frame);
+	
+	UFUNCTION(BlueprintPure, Category = "Jolt Physics")
+	int32 GetCurrentPhysicsFrame() const {return CurrentPhysicsFrame;}
+	
 	UFUNCTION(BlueprintCallable, Category = "Jolt Physics", meta = (AdvancedDisplay = "Layer"))
 	int64 AddDynamicBody(AActor* body, const float& friction, const float& restitution, const float& mass, FName Layer = NAME_None);
 
@@ -284,9 +302,21 @@ public:
 	double GetPhysicsAlpha() const { return PhysicsAlpha_; }
 
 	void RestoreState(const TArray<uint8>& serverPhysicsState) const;
+	void RestoreState(const int32& Frame) const;
 
 	// Saves the current physics states of bodies (optionally filtered)
 	void SaveState(TArray<uint8>& serverPhysicsState, JPH::StateRecorderFilter* saveFilterImpl = nullptr) const;
+	
+	void SaveState(TArray<uint8>& serverPhysicsState) const;
+	void SaveState(const int32& Frame);
+	
+	FJoltWorldSnapshot& GetSnapshotForFrame(const int32& Frame);
+	const FJoltWorldSnapshot& GetSnapshotForFrame(const int32& Frame) const;
+	
+	FJoltWorldSnapshot HistoryRingBuffer[128];
+	int32 CurrentPhysicsFrame = INDEX_NONE;
+	SaveStateFilter* StateFilter = nullptr;
+	
 
 	/* This will automatically be called in the tick function
 	 * for use cases where you just need to step the physics only
