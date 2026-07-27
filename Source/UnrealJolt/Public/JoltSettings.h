@@ -108,6 +108,14 @@ public:
 	 */
 	UPROPERTY(Config, EditAnywhere, Category = Settings)
 	int MaxPhysicsJobs;
+	
+	/*
+	* Setting this to true will allow the Jolt world subsystem to automatically step the physics world. 
+	* Turning it off will mean you have to manually step physics elsewhere.
+	*/
+	UPROPERTY(Config, EditAnywhere, Category = Settings)
+	bool bAutoStepPhysics = true;
+	
 
 	/*
 	 * Multithreading currently uses the example implementation in jolt, which works but might need a proper implementation as suggesed by jolt

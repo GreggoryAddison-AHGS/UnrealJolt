@@ -163,6 +163,8 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Jolt Physics")
 	int GetTickRate() { return JoltSettings->TickRate; };
+	
+	virtual bool IsTickable() const override;
 
 #if WITH_EDITOR
 	UFUNCTION(BlueprintCallable, Category = "Jolt Physics")

@@ -344,6 +344,14 @@ void UJoltSubsystem::Tick(float deltaSeconds)
 	TRACE_CPUPROFILER_EVENT_SCOPE(UJoltSubsystem::Tick);
 	Super::Tick(deltaSeconds);
 
+	if (JoltSettings)
+	{
+		if (!JoltSettings->bAutoStepPhysics)
+		{
+			return;
+		}
+	}
+
 	if (JoltWorker == nullptr)
 	{
 		return;
@@ -1621,6 +1629,16 @@ void UJoltSubsystem::HandleLandscapeMeshes(const ALandscape* LandscapeActor)
 			ExtractSplineMeshGeometry(splineMesh->GetBodySetup(), splineMesh->GetComponentTransform());
 		}
 	}
+}
+
+bool UJoltSubsystem::IsTickable() const
+{
+	if (const UJoltSettings* Settings = GetDefault<UJoltSettings>())
+	{
+		return Settings->bAutoStepPhysics;
+	}
+	
+	return Super::IsTickable();
 }
 
 void UJoltSubsystem::ExtractSplineMeshGeometry(const UBodySetup* splineMeshBodySetup, const FTransform& splineMeshTransform)
